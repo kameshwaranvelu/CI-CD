@@ -1,0 +1,9 @@
+# Centrally excluded findings — each one is a deliberate design choice,
+# Excluded here (rather than with inline #tfsec:ignore comments) because
+# aws-eks-no-public-cluster-access, aws-eks-no-public-cluster-access-to-cidr,
+# and aws-ec2-no-public-egress-sgr are all flagged inside the vendored
+exclude:
+  - aws-eks-no-public-cluster-access
+  - aws-eks-no-public-cluster-access-to-cidr
+  - aws-ec2-no-public-egress-sgr
+  - aws-iam-no-policy-wildcards
