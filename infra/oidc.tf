@@ -1,19 +1,9 @@
-# =============================================================================
-# GitHub Actions OIDC — keyless CI auth (replaces the static-key IAM user).
-#
-# GitHub's OIDC "sub" claim uses IMMUTABLE numeric IDs appended to the org and
-# repo names, e.g.  repo:kameshwaranvelu@102864947/watermark-app@1306304347:...
-# so the trust condition wildcards those "@<id>" segments.
-# =============================================================================
-
 variable "github_owner" {
   description = "GitHub org/user that owns the repos (name only, no numeric id). Set via TF_VAR_github_owner / GitHub variable."
   type        = string
   default     = ""
 }
 
-# Mono-repo: infra/ and application/ live in ONE repo, so both CI roles
-# trust the same repository. Set repo_name to your mono-repo's name.
 variable "repo_name" {
   description = "Name of the mono-repo (contains both infra/ and application/)."
   type        = string
@@ -21,19 +11,15 @@ variable "repo_name" {
 }
 
 # ---- OIDC provider -----------------------------------------------------------
-# Create once per account. If you already created it by hand while testing,
-# import it:  terraform import aws_iam_openid_connect_provider.github \
-#   arn:aws:iam::<acct>:oidc-provider/token.actions.githubusercontent.com
+
 resource "aws_iam_openid_connect_provider" "github" {
-  url             = "https://token.actions.githubusercontent.com"
-  client_id_list  = ["sts.amazonaws.com"]
+  url            = "https://token.actions.githubusercontent.com"
+  client_id_list = ["sts.amazonaws.com"]
   # AWS validates GitHub's OIDC via the CA chain; the thumbprint is required
   # by the API but no longer security-critical for this provider.
   thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
 }
 
-# ---- Trust policy helper -----------------------------------------------------
-# Wildcards the "@<numeric-id>" that GitHub injects into org and repo names.
 locals {
   app_repo_sub   = "repo:${var.github_owner}*/${var.repo_name}*:*"
   infra_repo_sub = "repo:${var.github_owner}*/${var.repo_name}*:*"
@@ -98,7 +84,6 @@ resource "aws_iam_role_policy" "app_ci_ecr" {
   policy = data.aws_iam_policy_document.app_ci_ecr.json
 }
 
-# ---- Terraform (infra) role: broad admin to manage the stack ----------------
 data "aws_iam_policy_document" "infra_ci_trust" {
   statement {
     effect  = "Allow"
@@ -125,8 +110,6 @@ resource "aws_iam_role" "infra_ci" {
   assume_role_policy = data.aws_iam_policy_document.infra_ci_trust.json
 }
 
-# Terraform needs broad permissions to build the whole stack. Scope this down
-# to specific services later; PowerUser + IAM is a pragmatic starting point.
 # tfsec:ignore:aws-iam-no-policy-wildcards
 resource "aws_iam_role_policy_attachment" "infra_ci_power" {
   role       = aws_iam_role.infra_ci.name
@@ -150,7 +133,6 @@ resource "aws_iam_role_policy" "infra_ci_iam" {
   policy = data.aws_iam_policy_document.infra_ci_iam.json
 }
 
-# ---- Outputs: the role ARNs to put in GitHub as variables -------------------
 output "app_ci_role_arn" {
   description = "Set as APP_CI_ROLE_ARN variable in the watermark-app repo."
   value       = aws_iam_role.app_ci.arn

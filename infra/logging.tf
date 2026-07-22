@@ -8,10 +8,6 @@ resource "aws_cloudwatch_log_group" "watermark_app" {
 # tfsec:ignore:aws-iam-no-policy-wildcards -- scoped to this one log group;
 # the trailing ":*" covers its log streams, not a cross-resource wildcard
 data "aws_iam_policy_document" "fluent_bit_cloudwatch" {
-  # Group-level actions: DescribeLogGroups and CreateLogGroup don't operate
-  # on a single fixed log-group ARN, so they need a broader resource scope
-  # (all log groups in this account/region). Scoping these to one ARN is
-  # what caused the AccessDenied on CreateLogStream.
   statement {
     effect = "Allow"
     actions = [
@@ -93,8 +89,6 @@ resource "helm_release" "fluent_bit" {
     name  = "serviceAccount.name"
     value = kubernetes_service_account.fluent_bit.metadata[0].name
   }
-  # Send every pod's logs to one log group, one stream per pod — simplest
-  # setup to start; split by namespace/app later if log volume grows.
   set {
     name  = "cloudWatch.region"
     value = var.aws_region

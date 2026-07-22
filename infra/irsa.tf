@@ -16,9 +16,6 @@ module "alb_controller_irsa" {
 }
 
 # ---------- watermark-app pod: read-only access to the assets bucket ----------
-# resources scoped to exactly one bucket's objects and its own KMS key;
-# the "*" here is a key-suffix/wildcard-within-one-resource, not a
-# cross-account or cross-resource wildcard.
 # tfsec:ignore:aws-iam-no-policy-wildcards
 data "aws_iam_policy_document" "watermark_app_s3_read" {
   statement {
@@ -37,8 +34,6 @@ data "aws_iam_policy_document" "watermark_app_s3_read" {
     actions   = ["s3:ListBucket"]
     resources = [aws_s3_bucket.watermark_assets.arn]
   }
-  # Bucket is KMS-encrypted: reading needs Decrypt, writing needs
-  # GenerateDataKey + Encrypt.
   statement {
     effect = "Allow"
     actions = [
