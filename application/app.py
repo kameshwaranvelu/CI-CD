@@ -20,13 +20,10 @@ metrics.info("watermark_app_info", "Watermark app build info", version="1.0.0")
 
 # Path where the init container (or build) drops the watermark logo.
 WATERMARK_PATH = os.environ.get("WATERMARK_PATH", "/app/assets/watermark.png")
-WATERMARK_OPACITY = float(os.environ.get("WATERMARK_OPACITY", "0.5"))
-WATERMARK_SCALE = float(os.environ.get("WATERMARK_SCALE", "0.2"))  # % of base image width
-
-# S3: watermarked results are stored here. The bucket comes from the same
-# env the deployment already injects. Credentials come from the pod's IRSA
-# role (no static keys). The "outputs/" prefix keeps results separate from
-# the "watermark/" logo the init container reads.
+WATERMARK_OPACITY = float(os.environ.get("WATERMARK_OPACITY", "0.7"))
+WATERMARK_SCALE = float(os.environ.get("WATERMARK_SCALE", "0.4"))  # logo: % of base image width
+WATERMARK_TEXT = os.environ.get("WATERMARK_TEXT", "Testing")       # bold text watermark
+WATERMARK_TEXT_SCALE = float(os.environ.get("WATERMARK_TEXT_SCALE", "0.12"))  # text: % of width
 S3_BUCKET = os.environ.get("WATERMARK_ASSETS_BUCKET", "")
 S3_OUTPUT_PREFIX = os.environ.get("S3_OUTPUT_PREFIX", "outputs")
 AWS_REGION = os.environ.get("AWS_REGION", "ap-south-1")
@@ -35,34 +32,58 @@ _s3 = boto3.client("s3", region_name=AWS_REGION) if S3_BUCKET else None
 
 
 def apply_watermark(base_image: Image.Image, watermark_path: str) -> Image.Image:
-    """Overlay a semi-transparent watermark logo in the bottom-right corner."""
+    """Overlay a semi-transparent logo (bottom-right) plus a bold text
+    watermark (bottom-centre)."""
     base = base_image.convert("RGBA")
 
+    # ---- 1. Logo overlay (bottom-right) ----
     if os.path.exists(watermark_path):
         mark = Image.open(watermark_path).convert("RGBA")
         target_w = int(base.width * WATERMARK_SCALE)
         ratio = target_w / mark.width
         mark = mark.resize((target_w, int(mark.height * ratio)))
 
-        # Apply opacity
         alpha = mark.split()[3].point(lambda p: int(p * WATERMARK_OPACITY))
         mark.putalpha(alpha)
 
         position = (base.width - mark.width - 20, base.height - mark.height - 20)
         base.paste(mark, position, mark)
-    else:
-        # Fallback: text watermark if no logo is available
-        draw = ImageDraw.Draw(base)
-        text = "SAMPLE"
-        try:
-            font = ImageFont.truetype("DejaVuSans-Bold.ttf", size=int(base.width * 0.05))
-        except IOError:
-            font = ImageFont.load_default()
-        bbox = draw.textbbox((0, 0), text, font=font)
-        w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        draw.text((base.width - w - 20, base.height - h - 20), text, font=font,
-                   fill=(255, 255, 255, int(255 * WATERMARK_OPACITY)))
 
+    # ---- 2. Bold text watermark (always drawn, bottom-centre) ----
+    overlay = Image.new("RGBA", base.size, (255, 255, 255, 0))
+    draw = ImageDraw.Draw(overlay)
+    text = WATERMARK_TEXT
+    # Big: font sized relative to image width
+    font_size = max(24, int(base.width * WATERMARK_TEXT_SCALE))
+    font = None
+    for candidate in (
+        "DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "LiberationSans-Bold.ttf",
+    ):
+        try:
+            font = ImageFont.truetype(candidate, size=font_size)
+            break
+        except (IOError, OSError):
+            continue
+    if font is None:
+        font = ImageFont.load_default()
+
+    bbox = draw.textbbox((0, 0), text, font=font)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    tx = (base.width - tw) // 2
+    ty = base.height - th - int(base.height * 0.06)
+
+    text_alpha = int(255 * WATERMARK_OPACITY)
+    # Dark outline for contrast on light images
+    outline = max(2, font_size // 20)
+    for dx in (-outline, 0, outline):
+        for dy in (-outline, 0, outline):
+            if dx or dy:
+                draw.text((tx + dx, ty + dy), text, font=font, fill=(0, 0, 0, text_alpha))
+    draw.text((tx, ty), text, font=font, fill=(255, 255, 255, text_alpha))
+
+    base = Image.alpha_composite(base, overlay)
     return base.convert("RGB")
 
 
