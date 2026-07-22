@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - serviceaccount.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+  - servicemonitor.yaml
+
+images:
+  - name: __ECR_REGISTRY__/watermark-app
+    newName: __ECR_REGISTRY__/watermark-app
+    newTag: latest   # this line gets updated by CI on each build

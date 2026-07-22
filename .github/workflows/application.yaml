@@ -1,0 +1,181 @@
+name: Application (CI/CD)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "application/**"
+      - ".github/workflows/application.yaml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "application/**"
+      - ".github/workflows/application.yaml"
+
+env:
+  AWS_REGION: ap-south-1
+  IMAGE_NAME: ${{ secrets.ECR_REGISTRY }}/watermark-app
+
+jobs:
+  # 1. Unit tests
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: application
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - run: pytest --cov=app --cov-report=xml --cov-report=term-missing
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: application/coverage.xml
+          retention-days: 1
+
+  # 2. SonarCloud
+  sonarcloud:
+    name: SonarCloud scan
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Download coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage
+          path: application
+      - name: SonarCloud scan
+        uses: SonarSource/sonarcloud-github-action@master
+        with:
+          projectBaseDir: application
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      - name: Quality gate
+        uses: sonarsource/sonarqube-quality-gate-action@master
+        continue-on-error: true ## for testing-purpose
+        timeout-minutes: 5
+        with:
+          scanMetadataReportFile: application/.scannerwork/report-task.txt
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  # 3. Build arm64 image (artifact, not pushed)
+  build:
+    name: Build image
+    needs: sonarcloud
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
+    defaults:
+      run:
+        working-directory: application
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        run: echo "tag=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Build arm64 image to tarball
+        run: |
+          docker buildx build \
+            --platform linux/arm64 \
+            --target runtime \
+            -t $IMAGE_NAME:${{ steps.meta.outputs.tag }} \
+            --output type=docker,dest=image.tar .
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: image
+          path: application/image.tar
+          retention-days: 1
+
+  # 4. Trivy scan (gate)
+  scan:
+    name: Trivy scan
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: image
+      - name: Load image
+        run: docker load --input image.tar
+      - name: Trivy scan (fail on HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+
+  # 5. Push to ECR (main only)
+  push:
+    name: Push to ECR
+    needs: [build, scan]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: image
+      - name: Load image
+        run: docker load --input image.tar
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.APP_CI_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Push image
+        run: docker push $IMAGE_NAME:${{ needs.build.outputs.image_tag }}
+
+  # 6. Render manifests into application/deploy (main only) → ArgoCD syncs
+  render-manifests:
+    name: Render manifests
+    needs: [build, push]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+      WATERMARK_APP_IRSA_ROLE_ARN: ${{ vars.WATERMARK_APP_IRSA_ROLE_ARN }}
+      WATERMARK_ASSETS_BUCKET: ${{ vars.WATERMARK_ASSETS_BUCKET }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Render templated manifests into application/deploy
+        run: |
+          mkdir -p application/deploy
+          for f in deployment service ingress serviceaccount servicemonitor; do
+            [ -f "application/k8s/${f}.yaml" ] && cp "application/k8s/${f}.yaml" "application/deploy/${f}.yaml"
+          done
+          sed -i \
+            -e "s|__ECR_REGISTRY__|${ECR_REGISTRY}|g" \
+            -e "s|__WATERMARK_APP_IRSA_ROLE_ARN__|${WATERMARK_APP_IRSA_ROLE_ARN}|g" \
+            -e "s|__WATERMARK_ASSETS_BUCKET__|${WATERMARK_ASSETS_BUCKET}|g" \
+            -e "s|IMAGE_TAG|${{ needs.build.outputs.image_tag }}|g" \
+            application/deploy/*.yaml
+      - name: Commit rendered manifests
+        run: |
+          git config user.name "ci-bot"
+          git config user.email "ci-bot@users.noreply.github.com"
+          git add application/deploy
+          git diff --cached --quiet && echo "no changes" && exit 0
+          git commit -m "deploy: render manifests ${{ needs.build.outputs.image_tag }} [skip ci]"
+          git push
