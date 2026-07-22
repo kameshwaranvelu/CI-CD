@@ -1,0 +1,44 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: watermark-app-stress-test
+  namespace: watermark
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: stress
+          image: curlimages/curl:8.9.1
+          command:
+            - sh
+            - -c
+            - |
+              URL="http://watermark-app.watermark.svc.cluster.local"
+              echo "== CPU stress (concurrent, 60s) =="
+              for i in $(seq 1 8); do
+                curl -s "$URL/stress-cpu?seconds=60" & 
+              done
+
+              echo "== Memory stress (concurrent, 60s) =="
+              for i in $(seq 1 5); do
+                curl -s "$URL/stress-mem?mb=180&seconds=60" &
+              done
+
+              echo "== Error rate stress (2 min of failing requests) =="
+              end=$(( $(date +%s) + 120 ))
+              while [ "$(date +%s)" -lt "$end" ]; do
+                curl -s -o /dev/null "$URL/stress-fail"
+                sleep 0.2
+              done
+
+              wait
+              echo "stress test complete"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi

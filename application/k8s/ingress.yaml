@@ -1,0 +1,35 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: watermark-app
+  namespace: watermark
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing   # public
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    # Health check the app's dedicated liveness endpoint (returns 200 {"status":"ok"}).
+    # Without this the ALB defaults to "/", which the app has no route for (404),
+    # marking all targets unhealthy.
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    alb.ingress.kubernetes.io/healthcheck-port: "8080"
+    alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
+    alb.ingress.kubernetes.io/success-codes: "200"
+    # No custom domain / ACM cert: this exposes the app over plain HTTP
+    # on the ALB's own AWS-provided DNS name, e.g.
+    #   k8s-watermark-xxxxxxxx-yyyyyyyy.us-east-1.elb.amazonaws.com
+    # That hostname is free, public, and works immediately — find it with:
+    #   kubectl -n watermark get ingress watermark-app
+    # Once you own a real domain, add a `host:` rule below, switch to
+    # listen-ports 443, and add the ACM cert ARN annotation back.
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: watermark-app
+                port:
+                  number: 80
