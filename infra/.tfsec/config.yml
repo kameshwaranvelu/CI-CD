@@ -1,0 +1,16 @@
+# Centrally excluded findings — each one is a deliberate design choice,
+# Excluded here (rather than with inline #tfsec:ignore comments) because
+# aws-eks-no-public-cluster-access, aws-eks-no-public-cluster-access-to-cidr,
+# and aws-ec2-no-public-egress-sgr are all flagged inside the vendored
+exclude:
+  #publicaccess need to given to access cluster from internet
+  - aws-eks-no-public-cluster-access
+  - aws-eks-no-public-cluster-access-to-cidr
+  # Default EKS node security group egress (outbound only, needed to pull
+  # images/OS updates) — no inbound rule is open, so this isn't a real hole.
+  - aws-ec2-no-public-egress-sgr
+  # IAM wildcards below are each scoped to one bucket/log-group/action
+  # that has no resource-level ARN support in AWS IAM (eks:DescribeCluster),
+  # or where the "*" is only a key/stream suffix within one resource, not
+  # a cross-resource wildcard. See iam-ci-user.tf, irsa.tf, logging.tf.
+  - aws-iam-no-policy-wildcards
