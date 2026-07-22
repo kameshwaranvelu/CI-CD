@@ -1,0 +1,19 @@
+# Terraform state and working files — never commit these
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+crash.log
+crash.*.log
+
+# Local variable overrides — may contain values you don't want in git
+terraform.tfvars
+*.auto.tfvars
+
+# Plan output files
+tfplan
+*.tfplan
+
+# OS/editor junk
+.DS_Store
+.vscode/
