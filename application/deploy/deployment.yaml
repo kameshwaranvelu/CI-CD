@@ -38,7 +38,7 @@ spec:
               value: ap-south-1
       containers:
         - name: watermark-app
-          image: 981750770692.dkr.ecr.ap-south-1.amazonaws.com/watermark-app:491bbb6   # tag set by ArgoCD/kustomize
+          image: 981750770692.dkr.ecr.ap-south-1.amazonaws.com/watermark-app:7e2186b   # tag set by ArgoCD/kustomize
           ports:
             - containerPort: 8080
           env:
