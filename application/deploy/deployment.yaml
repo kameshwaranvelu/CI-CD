@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: watermark-app
+  namespace: watermark
+  labels:
+    app: watermark-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: watermark-app
+  template:
+    metadata:
+      labels:
+        app: watermark-app
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: watermark-app
+      securityContext:
+        fsGroup: 10001
+      initContainers:
+        - name: fetch-watermark-asset
+          image: amazon/aws-cli:2.17.0
+          command:
+            - sh
+            - -c
+            - |
+              aws s3 cp s3://watermark-app-dev-assets-981750770692/watermark/logo.png /assets/watermark.png
+          volumeMounts:
+            - name: watermark-asset
+              mountPath: /assets
+          env:
+            - name: AWS_REGION
+              value: ap-south-1
+      containers:
+        - name: watermark-app
+          image: 981750770692.dkr.ecr.ap-south-1.amazonaws.com/watermark-app:491bbb6   # tag set by ArgoCD/kustomize
+          ports:
+            - containerPort: 8080
+          env:
+            - name: WATERMARK_PATH
+              value: /app/assets/watermark.png
+            - name: WATERMARK_ASSETS_BUCKET
+              value: watermark-app-dev-assets-981750770692
+            - name: AWS_REGION
+              value: ap-south-1
+            - name: S3_OUTPUT_PREFIX
+              value: outputs
+          volumeMounts:
+            - name: watermark-asset
+              mountPath: /app/assets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+
+      volumes:
+        - name: watermark-asset
+          emptyDir: {}
