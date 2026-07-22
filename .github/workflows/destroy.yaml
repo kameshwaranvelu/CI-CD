@@ -1,0 +1,56 @@
+name: Destroy Infra
+
+# Manual only. Requires typing the confirmation phrase to prevent accidents.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "destroy" to confirm tearing down ALL infrastructure'
+        required: true
+        type: string
+
+env:
+  AWS_REGION: ap-south-1
+  TF_VAR_app_repo_url: ${{ vars.APP_REPO_URL }}
+  TF_VAR_app_repo_username: ${{ vars.APP_REPO_USERNAME }}
+  TF_VAR_github_owner: ${{ vars.GITHUB_OWNER }}
+  TF_VAR_repo_name: ${{ vars.REPO_NAME }}
+  TF_VAR_gitops_pat: ${{ secrets.GITOPS_PAT }}
+
+defaults:
+  run:
+    working-directory: infra
+
+jobs:
+  destroy:
+    name: Terraform Destroy
+    # Guard: only proceed if the user typed exactly "destroy"
+    if: ${{ inputs.confirm == 'destroy' }}
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.5"
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.INFRA_CI_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - run: terraform init
+
+      # Delete k8s-managed ALBs/ingresses first so the VPC can be destroyed
+      # (the AWS Load Balancer Controller creates ALBs outside Terraform).
+      - name: Clean up ingress-created load balancers
+        continue-on-error: true
+        run: |
+          aws eks update-kubeconfig --name watermark-app-dev --region $AWS_REGION || true
+          kubectl delete ingress --all -A --timeout=120s || true
+          kubectl delete svc --all-namespaces --field-selector spec.type=LoadBalancer --timeout=120s || true
+          sleep 60
+
+      - run: terraform destroy -auto-approve
