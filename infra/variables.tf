@@ -61,18 +61,6 @@ variable "node_max_size" {
   default = 4
 }
 
-variable "domain_name" {
-  description = "Domain used for the public app URL, e.g. watermark.example.com. Leave blank to skip ACM/DNS resources."
-  type        = string
-  default     = ""
-}
-
-variable "route53_zone_id" {
-  description = "Existing Route53 hosted zone ID for domain_name. Leave blank to skip DNS automation."
-  type        = string
-  default     = ""
-}
-
 variable "argocd_chart_version" {
   type    = string
   default = "7.6.8"
